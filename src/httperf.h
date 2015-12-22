@@ -128,6 +128,7 @@ typedef struct Cmdline_Params
     int use_timer_cache;
     const char *additional_header;	/* additional request header(s) */
     const char *additional_header_file;
+    int use_embedded_http_headers;     /* use (or not) embedded http headers (at request level) */
     const char *method;	/* default call method */
     struct
       {

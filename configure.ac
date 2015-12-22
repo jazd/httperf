@@ -84,6 +84,7 @@ AC_TYPE_SIGNAL
 AC_FUNC_STRTOD
 AC_FUNC_VPRINTF
 AC_CHECK_FUNCS([getopt_long])
+AC_CHECK_FUNCS([strnstr])
 
 # Turn on Debug if necessary
 AC_ARG_ENABLE(debug,
