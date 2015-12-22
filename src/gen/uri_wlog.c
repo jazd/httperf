@@ -55,6 +55,17 @@
    This way, we don't need any parsing of the string when generating
    the URI.
 
+   If, however, the --embedded-http-headers option is given, then the format
+   is as follows:
+
+   http-headers^AURI1\0http-headers^AYURI2\0...URIn\0
+
+   Where, the requests are separated by the \0, and the http headers for
+   each request are given before the first control-A character.  The headers
+   are parsed exactly as they are when passed by --add-header.  However,
+   each request is given it's own set of http headers.  (That is, the headers
+   are not additive.)
+
    You can choose to loop on te list of URIs by using the following
    command line option to httperf:
 
@@ -88,11 +99,64 @@
 
 static char *fbase, *fend, *fcurrent;
 
+/* borrowed from src/gen/misc.c */
+static const char *
+unescape_local (const char *str, int *len)
+{
+  char *dp, *dst = strdup (str);
+  const char *cp;
+  int ch;
+
+  if (!dst)
+    panic ("%s: strdup() failed: %s\n", prog_name, strerror (errno));
+
+  for (cp = str, dp = dst; (ch = *cp++); )
+    {
+      if (ch == '\\')
+	{
+	  ch = *cp++;
+	  switch (ch)
+	    {
+	    case '\\':	/* \\ -> \ */
+	      break;
+
+	    case 'a':	/* \a -> LF */
+	      ch = 10;
+	      break;
+
+	    case 'r':	/* \r -> CR */
+	      ch = 13;
+	      break;
+
+	    case 'n':	/* \n -> CR/LF */
+	      *dp++ = 13;
+	      ch = 10;
+	      break;
+
+	    case '0': case '1': case '2': case '3': case '4':
+	    case '5': case '6': case '7': case '8': case '9':
+	      ch = strtol (cp - 1, (char **) &cp, 8);
+	      break;
+
+	    default:
+	      fprintf (stderr, "%s: ignoring unknown escape sequence "
+		       "`\\%c' in --add-header\n", prog_name, ch);
+	      break;
+	    }
+	}
+      *dp++ = ch;
+    }
+  *len = dp - dst;
+  return dst;
+}
+
 static void
 set_uri (Event_Type et, Call * c)
 {
   int len, did_wrap = 0;
-  const char *uri;
+  const char *uri, *extra_request_headers, *extra_request_headers_escaped;
+  char *ptr, *erh_2;
+  int extra_request_headers_len, extra_request_headers_len2, len_to_advance;
 
   assert (et == EV_CALL_NEW && object_is_call (c));
 
@@ -115,8 +179,66 @@ set_uri (Event_Type et, Call * c)
 	}
       uri = fcurrent;
       len = strlen (fcurrent);
+      len_to_advance = len;
+
+      /* look for global option for embedded HTTP headers.
+      if set, look for control-A separator.  If found, parse from fcurrent to ctrl-A as headers, and set ctrl-A+1 as uri.  Then set len to len -= strlen(headers)
+
+      be sure that the extra (which is the headers itself) is unescaped
+      -- unescape calls strdup, so it's safe to use the returned string
+
+      */
+      if (param.use_embedded_http_headers)
+      {
+        extra_request_headers = '\0';
+        extra_request_headers = memchr(uri, '\1', len);
+        if (extra_request_headers != '\0')
+        {
+          /* control-A character found ... swap variables so they make sense */
+          ptr = (char *)uri;
+          uri = extra_request_headers;
+          uri++;
+          extra_request_headers = ptr;
+          /*
+            now, uri points to the start of the URL to request
+            and extra_request_headers points to the start of the http
+            Loop thru the headers, find the \1, and replace it with \0.
+          */
+
+          extra_request_headers_len = 0;
+          erh_2 = '\0';
+          ptr = (char *)extra_request_headers;
+          while (*ptr)
+          {
+            if (*ptr == '\1')
+            {
+                erh_2 = (char *)malloc(extra_request_headers_len+1);
+                memset(erh_2, '\0', extra_request_headers_len+1);
+                memcpy(erh_2, extra_request_headers, extra_request_headers_len);
+                break;
+            }
+            ptr++;
+            extra_request_headers_len++;
+          }
+
+          extra_request_headers_escaped =
+            unescape_local(erh_2, &extra_request_headers_len2);
+          if (erh_2)
+            free(erh_2);
+          if (DBG > 5)
+            fprintf(stderr, "Generated http headers [%.*s] uri [%s]\n",
+              extra_request_headers_len2, extra_request_headers_escaped, uri);
+
+          call_append_request_header (c,
+            extra_request_headers_escaped, extra_request_headers_len2);
+          /* and reduce the length of the URI by the header length */
+          len -= extra_request_headers_len + 1;
+
+        }
+      }
+
       call_set_uri (c, uri, len);
-      fcurrent += len + 1;
+      fcurrent += len_to_advance + 1;
     }
   while (len == 0);
 

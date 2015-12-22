@@ -116,6 +116,7 @@ static struct option longopts[] = {
 	{"client", required_argument, (int *) &param.client, 0},
 	{"close-with-reset", no_argument, &param.close_with_reset, 1},
 	{"debug", required_argument, 0, 'd'},
+	{"embedded-http-headers", no_argument, &param.use_embedded_http_headers, 1},
 	{"failure-status", required_argument, &param.failure_status, 0},
 	{"help", no_argument, 0, 'h'},
 	{"hog", no_argument, &param.hog, 1},
@@ -1213,6 +1214,8 @@ main(int argc, char **argv)
 		printf(" --add-header='%s'", param.additional_header);
 	if (param.additional_header_file)
 		printf(" --add-header-file='%s'", param.additional_header_file);
+	if (param.use_embedded_http_headers)
+		printf(" --embedded-http-headers");
 	if (param.method)
 		printf(" --method=%s", param.method);
 	if (param.use_timer_cache)

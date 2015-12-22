@@ -128,9 +128,45 @@ static char     http10req_nohost[] =
 static char     http11req_nohost[] =
     " HTTP/1.1\r\nUser-Agent: httperf/" VERSION;
 
+/* repeated for custom user-agent */
+static char     http10req_nouseragent[] =
+    " HTTP/1.0"
+    "\r\nConnection: keep-alive\r\nHost: ";
+static char     http11req_nouseragent[] =
+    " HTTP/1.1\r\nHost: ";
+
+static char     http10req_nohost_nouseragent[] =
+    " HTTP/1.0"
+    "\r\nConnection: keep-alive";
+static char     http11req_nohost_nouseragent[] =
+    " HTTP/1.1";
+
 #ifndef SOL_TCP
 # define SOL_TCP 6		/* probably ought to do getprotlbyname () */
 #endif
+
+#ifndef HAVE_STRNSTR
+char *strnstr(const char *haystack, const char *needle, size_t haystacklen)
+{
+	char *p;
+	size_t plen;
+	size_t len = strlen(needle);
+
+	if (*needle == '\0')    /* everything matches empty string */
+		return (char*) haystack;
+
+	plen = haystacklen;
+	for (p = (char*) haystack; p != NULL; p = memchr(p + 1, *needle, plen-1)) {
+		plen = haystacklen - (p - haystack);
+
+		if (plen < len) return NULL;
+
+		if (strncmp(p, needle, len) == 0)
+			return (p);
+	}
+	return NULL;
+}
+#endif /* HAVE_STRNSTR */
 
 #ifdef TIME_SYSCALLS
 # define SYSCALL(n,s)							\
@@ -1239,7 +1275,9 @@ int
 core_send(Conn * conn, Call * call)
 {
 	Any_Type        arg;
+	int             have_custom_user_agent;
 
+	have_custom_user_agent = 0;
 	arg.l = 0;
 	event_signal(EV_CALL_ISSUE, (Object *) call, arg);
 
@@ -1256,6 +1294,26 @@ core_send(Conn * conn, Call * call)
 		call->req.iov[IE_HOST].iov_len = conn->fqdname_len;
 	}
 
+	/* if we're using embedded http headers, look to see if User-Agent was specified */
+	if (param.use_embedded_http_headers) {
+		char *base_copy, *hdr;
+		int base_len, start_idx, end_idx, i, hdr_len;
+		end_idx = IE_CONTENT;
+		for (i = IE_METHOD; i < end_idx; ++i) {
+			hdr = call->req.iov[i].iov_base;
+			hdr_len = call->req.iov[i].iov_len;
+
+			if ((hdr_len) && (strnstr(hdr, "User-Agent: ", hdr_len) != NULL)) {
+				have_custom_user_agent = 1;
+				break;
+			}
+		}
+	}
+
+	if (DBG > 5) {
+		fprintf(stderr, "Custom user-agent is [%d]\n", have_custom_user_agent);
+        }
+
 	/*
 	 * NOTE: the protocol version indicates what the _client_ can
 	 * understand.  If we send HTTP/1.1, it doesn't mean that the server
@@ -1266,26 +1324,52 @@ core_send(Conn * conn, Call * call)
 	switch (call->req.version) {
 	case 0x10000:
 		if (param.no_host_hdr) {
-			call->req.iov[IE_PROTL].iov_base =
-			    (caddr_t) http10req_nohost;
-			call->req.iov[IE_PROTL].iov_len =
-			    sizeof(http10req_nohost) - 1;
+			if (have_custom_user_agent == 1) {
+				call->req.iov[IE_PROTL].iov_base =
+					(caddr_t) http10req_nohost_nouseragent;
+				call->req.iov[IE_PROTL].iov_len =
+					sizeof(http10req_nohost_nouseragent) - 1;
+			} else {
+				call->req.iov[IE_PROTL].iov_base = (caddr_t) http10req_nohost;
+				call->req.iov[IE_PROTL].iov_len = 
+					sizeof(http10req_nohost) - 1;
+			}
 		} else {
-			call->req.iov[IE_PROTL].iov_base = (caddr_t) http10req;
-			call->req.iov[IE_PROTL].iov_len =
-			    sizeof(http10req) - 1;
+			if (have_custom_user_agent == 1) {
+				call->req.iov[IE_PROTL].iov_base =
+					(caddr_t) http10req_nouseragent;
+				call->req.iov[IE_PROTL].iov_len =
+					sizeof(http10req_nouseragent) - 1;
+			} else {
+				call->req.iov[IE_PROTL].iov_base = (caddr_t) http10req;
+				call->req.iov[IE_PROTL].iov_len =
+					sizeof(http10req) - 1;
+			}
 		}
 		break;
 
 	case 0x10001:
 		if (param.no_host_hdr) {
-			call->req.iov[IE_PROTL].iov_base = http11req_nohost;
-			call->req.iov[IE_PROTL].iov_len =
-			    sizeof(http11req_nohost) - 1;
+			if (have_custom_user_agent == 1) {
+				call->req.iov[IE_PROTL].iov_base =
+					http11req_nohost_nouseragent;
+				call->req.iov[IE_PROTL].iov_len =
+					sizeof(http11req_nohost_nouseragent) - 1;
+			} else {
+				call->req.iov[IE_PROTL].iov_base = http11req_nohost;
+				call->req.iov[IE_PROTL].iov_len =
+					sizeof(http11req_nohost) - 1;
+			}
 		} else {
-			call->req.iov[IE_PROTL].iov_base = http11req;
-			call->req.iov[IE_PROTL].iov_len =
-			    sizeof(http11req) - 1;
+			if (have_custom_user_agent == 1) {
+				call->req.iov[IE_PROTL].iov_base = http11req_nouseragent;
+				call->req.iov[IE_PROTL].iov_len =
+					sizeof(http11req_nouseragent) - 1;
+			} else {
+				call->req.iov[IE_PROTL].iov_base = http11req;
+				call->req.iov[IE_PROTL].iov_len =
+					sizeof(http11req) - 1;
+			}
 		}
 		break;
 
